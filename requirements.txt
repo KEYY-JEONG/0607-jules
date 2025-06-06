@@ -1,0 +1,5 @@
+Flask
+PyMuPDF
+anthropic
+python-docx
+google-generativeai
