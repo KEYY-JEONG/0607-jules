@@ -6,7 +6,12 @@ import anthropic
 from docx import Document
 from datetime import datetime
 import shutil # For copying placeholder image
-import google.generativeai as genai # For Gemini API (placeholder)
+import google.generativeai as genai # For Gemini API
+import openai # For OpenAI API
+import requests # For fetching image from URL if Gemini returns that
+from PIL import Image # For image processing if Gemini returns image bytes
+import io # For image processing if Gemini returns image bytes
+
 
 UPLOAD_FOLDER = 'uploads'
 DOCS_FOLDER = 'docs' # For saving summaries
@@ -16,11 +21,21 @@ DOCS_DIR = os.path.abspath(DOCS_FOLDER)
 STATIC_IMAGES_FOLDER = 'static/images' # For saving visualizations
 
 ALLOWED_EXTENSIONS = {'pdf'}
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY") # User must set this env var
 
 app = Flask(__name__)
+
+# --- API Key Configuration ---
+# User must set these as environment variables for the application to function with live AI services.
+# For example, in your terminal before running the app:
+# export OPENAI_API_KEY='your_openai_key_here'
+# export ANTHROPIC_API_KEY='your_anthropic_key_here'
+# export GEMINI_API_KEY='your_gemini_key_here'
+app.config['OPENAI_API_KEY'] = os.environ.get('OPENAI_API_KEY')
+app.config['ANTHROPIC_API_KEY'] = os.environ.get('ANTHROPIC_API_KEY')
+app.config['GEMINI_API_KEY'] = os.environ.get('GEMINI_API_KEY')
+# --- End API Key Configuration ---
+
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-app.config['GEMINI_API_KEY'] = os.environ.get("GEMINI_API_KEY") # User must set this
 app.secret_key = 'super secret key'  # Needed for session management
 
 # Create upload, docs, and static/images folders if they don't exist
@@ -67,61 +82,160 @@ def parse_structured_summary(summary_text):
 
     return parsed
 
-def generate_visualization_prompt(summary_text):
-    """Generates a prompt for AI image generation based on summary."""
-    if isinstance(summary_text, dict): # If summary is already parsed
-        # Try to get content from Abstract or Introduction for the prompt
-        prompt_base = summary_text.get("Abstract", "") or summary_text.get("Introduction", "")
-        if not prompt_base: # Fallback if specific sections not found
-            prompt_base = " ".join(summary_text.values())
-        return f"Create a visual representation of the key findings from this research: {prompt_base[:200]}..."
-    # Fallback for string summary
-    return f"Create a visual representation of the key findings from this research: {str(summary_text)[:200]}..."
+def generate_visualization_prompt_with_anthropic(summary_text_or_dict):
+    """
+    Generates a visualization prompt using Anthropic API based on the summary.
+    Accepts either a string summary or a dictionary of parsed summary sections.
+    """
+    anthropic_api_key = app.config.get('ANTHROPIC_API_KEY')
+    if not anthropic_api_key:
+        print("ANTHROPIC_API_KEY not found. Returning default visualization prompt.")
+        return "Anthropic API key not set. Using default prompt: A generic scientific concept representing research findings."
+
+    summary_input_string = ""
+    if isinstance(summary_text_or_dict, dict):
+        # Convert dict to a readable string format for the prompt
+        for key, value in summary_text_or_dict.items():
+            summary_input_string += f"{key}: {value}\n"
+        summary_input_string = summary_input_string.strip()
+    elif isinstance(summary_text_or_dict, str):
+        summary_input_string = summary_text_or_dict
+    else:
+        print("Invalid summary format for Anthropic prompt generation. Using generic prompt.")
+        return "Invalid summary input. Default prompt: Key scientific breakthroughs illustrated."
+
+    if not summary_input_string.strip(): # Handle empty summary
+        print("Empty summary provided for Anthropic prompt generation. Using generic prompt.")
+        return "Empty summary. Default prompt: Abstract visualization of data."
+
+    try:
+        client = anthropic.Anthropic(api_key=anthropic_api_key)
+
+        claude_prompt_text = f"""
+Based on the following research paper summary, generate a concise and visually descriptive prompt (around 20-30 words) that can be used by an image generation AI to create a compelling visualization representing the core findings or essence of the paper.
+
+Summary:
+{summary_input_string}
+
+Generated Image Prompt:
+"""
+        # The "Generated Image Prompt:" line helps instruct Claude to only return the prompt.
+
+        response = client.messages.create(
+            model="claude-3-sonnet-20240229", # Using Sonnet as a balance
+            max_tokens=100,
+            messages=[
+                {"role": "user", "content": claude_prompt_text}
+            ]
+        )
+
+        if response.content and response.content[0].text:
+            visualization_prompt = response.content[0].text.strip()
+            # Sometimes Claude might still add a preamble like "Here's a prompt:"
+            # A simple way to try and remove it:
+            if "Generated Image Prompt:" in visualization_prompt:
+                 visualization_prompt = visualization_prompt.split("Generated Image Prompt:")[-1].strip()
+            if visualization_prompt.lower().startswith("here's a prompt:") or visualization_prompt.lower().startswith("here is a prompt:"):
+                visualization_prompt = visualization_prompt.split(":",1)[-1].strip()
+            return visualization_prompt
+        else:
+            print("Anthropic API returned an empty or invalid response for visualization prompt.")
+            return "Error: Anthropic API (Claude) returned an empty response for visualization prompt."
+
+    except anthropic.APIConnectionError as e:
+        print(f"Anthropic API Connection Error: {e}")
+        return f"Error: Anthropic API Connection Error - {e}"
+    except anthropic.RateLimitError as e:
+        print(f"Anthropic API Rate Limit Exceeded: {e}")
+        return f"Error: Anthropic API Rate Limit Exceeded - {e}"
+    except anthropic.APIStatusError as e:
+        print(f"Anthropic API Status Error: {e}")
+        return f"Error: Anthropic API Status Error - {e}"
+    except Exception as e:
+        print(f"An unexpected error occurred with Anthropic: {e}")
+        return f"Error: An unexpected error occurred with the Anthropic API - {e}"
 
 def generate_image_with_ai(prompt, base_filename_prefix="visualization"):
     """
     Generates an image using an AI model (Gemini placeholder).
-    Currently copies a placeholder image.
+    Attempts to use Gemini API if key is present, otherwise copies a placeholder image.
+    IMPORTANT NOTE: Direct text-to-image generation with the `google-generativeai`
+    library is complex and model-dependent. As of early 2024, this library is more
+    focused on text, chat, and multimodal understanding. True text-to-image generation
+    (like with Google's Imagen models) is often accessed via the Vertex AI SDK or
+    more specific APIs. The following implementation includes a conceptual structure
+    for a Gemini API call but will likely default to placeholder logic due to these
+    API specificities. A robust solution would require using the appropriate SDK and model name.
     """
     gemini_api_key = app.config.get('GEMINI_API_KEY')
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    safe_prefix = os.path.splitext(base_filename_prefix)[0]
-    img_filename = f"{safe_prefix}_{timestamp}.png"
-    dest_image_subpath = os.path.join('images', img_filename)
-    dest_abs_path = os.path.join(app.static_folder, dest_image_subpath)
 
-    # Common logic for copying placeholder
-    def copy_placeholder():
-        src_placeholder_path = os.path.join(app.static_folder, 'images', 'placeholder.png')
-        if not os.path.exists(src_placeholder_path):
-            print(f"Placeholder image not found at {src_placeholder_path}")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    original_filename_no_ext = os.path.splitext(base_filename_prefix)[0]
+    image_filename = f"{original_filename_no_ext}_visualization_{timestamp}.png"
+    image_save_subpath = os.path.join('images', image_filename) # Relative path for web
+    image_abs_save_path = os.path.join(app.static_folder, image_save_subpath) # Absolute path for saving
+
+    def _copy_placeholder_image():
+        placeholder_src = os.path.join(app.static_folder, 'images', 'placeholder.png')
+        if not os.path.exists(placeholder_src):
+            print(f"Error: Placeholder image not found at {placeholder_src}")
             return None
         try:
-            shutil.copy(src_placeholder_path, dest_abs_path)
-            print(f"Placeholder image copied to {dest_abs_path}")
-            return dest_image_subpath
-        except Exception as e:
-            print(f"Error copying placeholder image: {e}")
+            shutil.copy(placeholder_src, image_abs_save_path)
+            print(f"Used placeholder image: {image_filename}")
+            return image_save_subpath # Return web accessible path
+        except Exception as e_copy:
+            print(f"Error copying placeholder image: {e_copy}")
             return None
 
     if not gemini_api_key:
-        print("GEMINI_API_KEY not found. Using placeholder image.")
-        return copy_placeholder()
+        print("GEMINI_API_KEY not found or not set. Using placeholder image.")
+        return _copy_placeholder_image()
 
-    # --- Commented out: Actual Gemini API call ---
-    # print(f"Attempting to generate image with Gemini using prompt: {prompt}")
-    # try:
-    #     # ... (Gemini API call logic) ...
-    #     # if successful:
-    #     #     return dest_image_subpath
-    # except Exception as e:
-    #     print(f"Error with Gemini API (conceptual): {e}")
-    #     # Fall through to placeholder on error or if not implemented
-    # --- End Commented out ---
+    try:
+        genai.configure(api_key=gemini_api_key)
 
-    print("Gemini API key is present, but live generation logic is placeholder or not yet complete. Using placeholder image.")
-    return copy_placeholder()
+        # --- Placeholder for actual Gemini Text-to-Image API call ---
+        # The `google-generativeai` library's direct text-to-image capabilities are specific
+        # and might require a particular model name not generally available or through a different method.
+        # For example, 'gemini-pro-vision' is for understanding images, not generating them from text.
+        # Google's Imagen models are typically used for text-to-image.
 
+        print("NOTE: Attempting conceptual Gemini text-to-image generation.")
+        print(f"Intended prompt for Gemini: {prompt_text}")
+
+        # model = genai.GenerativeModel('gemini-1.0-pro-vision-latest') # This is an example, likely not for image gen from text
+        # model = genai.GenerativeModel('text-to-image-model-name') # Replace with actual if available
+        # response = model.generate_content(prompt_text)
+        #
+        # If the response contained image bytes:
+        # image_bytes = response.parts[0].inline_data.data # Highly speculative path to image bytes
+        # img = Image.open(io.BytesIO(image_bytes))
+        # img.save(image_abs_save_path, 'PNG')
+        # return image_save_subpath
+        #
+        # If the response contained a URL to an image:
+        # image_url = response.candidates[0].content.parts[0].file_data.uri # Highly speculative
+        # img_response = requests.get(image_url)
+        # img_response.raise_for_status()
+        # with open(image_abs_save_path, 'wb') as f:
+        #     f.write(img_response.content)
+        # return image_save_subpath
+
+        # Since direct, simple text-to-image is not a clear feature of `google-generativeai` for general models:
+        raise NotImplementedError("Direct Gemini text-to-image generation via `google-generativeai` is not straightforwardly implemented here. Requires specific models (e.g., Imagen via Vertex AI SDK).")
+
+    except NotImplementedError as nie: # Catching our own NotImplementedError
+        print(f"INFO: {nie}")
+        print("Falling back to placeholder image logic for Gemini image generation.")
+        return _copy_placeholder_image()
+    except genai.generation_types.BlockedPromptException as bpe:
+        print(f"Gemini API Blocked Prompt Error: {bpe}")
+        return _copy_placeholder_image() # Fallback on blocked prompt
+    except Exception as e: # Catch other potential google.generativeai errors or general errors
+        print(f"An unexpected error occurred with Gemini API: {type(e).__name__} - {e}")
+        print("Falling back to placeholder image logic.")
+        return _copy_placeholder_image()
 
 def save_summary_to_files(summary_text, base_filename_prefix="summary"):
     """Saves the summary text to Markdown and DOCX files."""
@@ -175,29 +289,60 @@ def summarize_text_with_ai(text_to_summarize):
     """
     Summarizes the given text using an AI model.
     Currently returns a mock summary.
+    Uses OpenAI API key from app.config.
     """
-    if not ANTHROPIC_API_KEY:
-        print("ANTHROPIC_API_KEY not found in environment variables. Returning mock summary.")
-        return """Abstract: API key not found. This is a mock abstract.
-Introduction: The system requires an Anthropic API key for real summarization.
+    openai_api_key = app.config.get('OPENAI_API_KEY')
+    if not openai_api_key:
+        print("OPENAI_API_KEY not found in environment variables or app.config. Returning mock summary.")
+        return """Abstract: OpenAI API key not found. This is a mock abstract.
+Introduction: The system requires an OpenAI API key for real summarization with GPT.
 Results: Mock results are shown.
-Discussion: Please set the ANTHROPIC_API_KEY environment variable for actual AI processing.
+Discussion: Please set the OPENAI_API_KEY environment variable for actual AI processing.
 """
 
-    # client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    prompt = f"""Please summarize the following text. Structure your summary into these exact sections: "Abstract", "Introduction", "Results", and "Discussion". Ensure the output is clearly delineated for easy parsing.
+    try:
+        client = openai.OpenAI(api_key=openai_api_key)
 
-Text to summarize:
+        prompt_text = f"""
+Please summarize the following research paper text.
+Structure the summary into these distinct sections: Abstract, Introduction, Results, and Discussion.
+Ensure each section is clearly labeled (e.g., "Abstract: ...", "Introduction: ...").
+
+Research Paper Text:
 {text_to_summarize}
 """
-    # ... (Anthropic API call code placeholder) ...
 
-    # Returning mock summary with clear section delineation
-    return """Abstract: This is a mock abstract from the AI placeholder.
-Introduction: This mock introduction explains the process.
-Results: The mock results section outlines findings.
-Discussion: This mock discussion part considers implications.
-"""
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo", # Or another suitable model like gpt-4-turbo-preview
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant skilled in summarizing research papers into structured formats."},
+                {"role": "user", "content": prompt_text}
+            ],
+            temperature=0.5, # Adjust for creativity vs. factuality
+            # max_tokens can be set if needed, but we want a full summary
+        )
+
+        if response.choices and response.choices[0].message and response.choices[0].message.content:
+            structured_summary = response.choices[0].message.content.strip()
+            # The summary should ideally already be in the "Section: Content" format.
+            # The existing parse_structured_summary function in the /results route will handle it.
+            return structured_summary
+        else:
+            print("OpenAI API returned an empty or invalid response.")
+            return "Error: OpenAI API returned an empty response. Please check the API status or try again."
+
+    except openai.APIConnectionError as e:
+        print(f"OpenAI API Connection Error: {e}")
+        return f"Error: OpenAI API Connection Error - {e}"
+    except openai.RateLimitError as e:
+        print(f"OpenAI API Rate Limit Exceeded: {e}")
+        return f"Error: OpenAI API Rate Limit Exceeded - {e}"
+    except openai.APIStatusError as e:
+        print(f"OpenAI API Status Error: {e}")
+        return f"Error: OpenAI API Status Error - {e}"
+    except Exception as e:
+        print(f"An unexpected error occurred with OpenAI: {e}")
+        return f"Error: An unexpected error occurred with the OpenAI API - {e}"
 
 @app.route('/', methods=['GET', 'POST'])
 def upload_file():
@@ -245,8 +390,8 @@ def process_and_summarize():
     session['saved_summary_details'] = saved_file_details # e.g. {'md': {'full_path': '...', 'filename': '...'}, ...}
 
     # Generate and store visualization (placeholder)
-    # Pass the raw summary string to generate_visualization_prompt
-    vis_prompt = generate_visualization_prompt(structured_summary_text)
+    # Pass the structured_summary_text (string from OpenAI) to the Anthropic prompter
+    vis_prompt = generate_visualization_prompt_with_anthropic(structured_summary_text)
     session['visualization_prompt'] = vis_prompt
 
     image_filename_prefix = os.path.splitext(original_pdf_filename)[0]

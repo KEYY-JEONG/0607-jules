@@ -29,12 +29,21 @@
         <div class="section" id="summary">
             <h2>Summary</h2>
             {% if summary_data %}
-                {% if summary_data is mapping %} {# Check if it's a dictionary #}
-                    {% for section, content in summary_data.items() %}
-                        <h3>{{ section }}</h3>
-                        <p>{{ content }}</p>
-                    {% endfor %}
-                {% else %} {# If it's a raw string #}
+                {% if summary_data is mapping %}
+                    {% if summary_data.Error %}
+                        <p><strong>Summary Status:</strong></p>
+                        <pre>{{ summary_data.Error }}</pre>
+                    {% elif summary_data['Full Summary'] %}
+                        <p><strong>Full Summary (sections not parsed):</strong></p>
+                        <pre>{{ summary_data['Full Summary'] }}</pre>
+                    {% else %}
+                        {% for section, content in summary_data.items() %}
+                            <h3>{{ section }}</h3>
+                            <p>{{ content }}</p>
+                        {% endfor %}
+                    {% endif %}
+                {% else %} {# Should not happen if parse_structured_summary always returns a dict #}
+                    <p><strong>Raw Summary Data (unexpected format):</strong></p>
                     <pre>{{ summary_data }}</pre>
                 {% endif %}
             {% else %}
