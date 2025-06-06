@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Processed Paper Results</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; line-height: 1.6; }
+        .container { max-width: 900px; margin: auto; background: #f9f9f9; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+        h1, h2, h3 { color: #333; }
+        h1 { text-align: center; margin-bottom: 30px; }
+        h2 { border-bottom: 2px solid #eee; padding-bottom: 10px; margin-top: 30px; }
+        h3 { color: #555; margin-top: 20px; }
+        p, pre { margin-bottom: 15px; }
+        pre { background-color: #eee; padding: 10px; border-radius: 4px; white-space: pre-wrap; font-family: monospace; }
+        .section { margin-bottom: 30px; }
+        .visualization-img { max-width: 100%; height: auto; border: 1px solid #ddd; border-radius: 4px; margin-top: 10px; }
+        .download-links ul { list-style: none; padding: 0; }
+        .download-links li { margin-bottom: 10px; }
+        .download-links a { text-decoration: none; background-color: #007bff; color: white; padding: 8px 15px; border-radius: 4px; }
+        .download-links a:hover { background-color: #0056b3; }
+        .nav-link { display: block; text-align: center; margin-top: 30px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Processed Paper Results</h1>
+
+        <div class="section" id="summary">
+            <h2>Summary</h2>
+            {% if summary_data %}
+                {% if summary_data is mapping %}
+                    {% if summary_data.Error %}
+                        <p><strong>Summary Status:</strong></p>
+                        <pre>{{ summary_data.Error }}</pre>
+                    {% elif summary_data['Full Summary'] %}
+                        <p><strong>Full Summary (sections not parsed):</strong></p>
+                        <pre>{{ summary_data['Full Summary'] }}</pre>
+                    {% else %}
+                        {% for section, content in summary_data.items() %}
+                            <h3>{{ section }}</h3>
+                            <p>{{ content }}</p>
+                        {% endfor %}
+                    {% endif %}
+                {% else %} {# Should not happen if parse_structured_summary always returns a dict #}
+                    <p><strong>Raw Summary Data (unexpected format):</strong></p>
+                    <pre>{{ summary_data }}</pre>
+                {% endif %}
+            {% else %}
+                <p>No summary data available.</p>
+            {% endif %}
+        </div>
+
+        <div class="section" id="visualization">
+            <h2>Visualization</h2>
+            {% if visualization_prompt %}
+                <h3>Prompt:</h3>
+                <pre>{{ visualization_prompt }}</pre>
+            {% else %}
+                <p>No visualization prompt available.</p>
+            {% endif %}
+
+            {% if visualization_image_path %}
+                <h3>Generated Image (Placeholder):</h3>
+                <img src="{{ url_for('static', filename=visualization_image_path) }}" alt="Visualization Placeholder" class="visualization-img">
+            {% else %}
+                <p>No visualization image available.</p>
+            {% endif %}
+        </div>
+
+        <div class="section download-links" id="downloads">
+            <h2>Downloads</h2>
+            {% if md_filename or docx_filename %}
+                <ul>
+                    {% if md_filename %}
+                        <li><a href="{{ url_for('download_doc', filename=md_filename) }}">Download Summary (Markdown)</a></li>
+                    {% endif %}
+                    {% if docx_filename %}
+                        <li><a href="{{ url_for('download_doc', filename=docx_filename) }}">Download Summary (DOCX)</a></li>
+                    {% endif %}
+                </ul>
+            {% else %}
+                <p>No downloadable files available.</p>
+            {% endif %}
+        </div>
+        <div class="nav-link">
+            <a href="{{ url_for('upload_file') }}">Process Another PDF</a>
+        </div>
+    </div>
+</body>
+</html>

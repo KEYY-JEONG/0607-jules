@@ -1,0 +1,7 @@
+Flask
+PyMuPDF
+python-docx
+openai
+anthropic
+google-generativeai
+Pillow
