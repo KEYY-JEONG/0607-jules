@@ -1,0 +1,31 @@
+# Environment variables
+.env
+
+# Python virtual environment
+venv/
+*.venv/
+env/
+ENV/
+
+# Python cache files and compiled files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+*.so
+
+# Uploaded files (user-specific, potentially large)
+uploads/
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# IDE specific files (optional, but good practice)
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace

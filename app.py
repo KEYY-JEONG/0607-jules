@@ -1,4 +1,5 @@
 import os
+from dotenv import load_dotenv
 from flask import Flask, request, redirect, url_for, render_template, session, send_from_directory
 from werkzeug.utils import secure_filename
 import fitz # PyMuPDF
@@ -12,6 +13,8 @@ import requests # For fetching image from URL if Gemini returns that
 from PIL import Image # For image processing if Gemini returns image bytes
 import io # For image processing if Gemini returns image bytes
 
+# Load environment variables from .env file first
+load_dotenv()
 
 UPLOAD_FOLDER = 'uploads'
 DOCS_FOLDER = 'docs' # For saving summaries
@@ -25,18 +28,21 @@ ALLOWED_EXTENSIONS = {'pdf'}
 app = Flask(__name__)
 
 # --- API Key Configuration ---
-# User must set these as environment variables for the application to function with live AI services.
-# For example, in your terminal before running the app:
-# export OPENAI_API_KEY='your_openai_key_here'
-# export ANTHROPIC_API_KEY='your_anthropic_key_here'
-# export GEMINI_API_KEY='your_gemini_key_here'
+# API keys are loaded from environment variables.
+# These can be set directly in the system or loaded from a .env file (via load_dotenv()).
+# User must set these for the application to function with live AI services.
+# Example: OPENAI_API_KEY='your_openai_key_here'
 app.config['OPENAI_API_KEY'] = os.environ.get('OPENAI_API_KEY')
 app.config['ANTHROPIC_API_KEY'] = os.environ.get('ANTHROPIC_API_KEY')
 app.config['GEMINI_API_KEY'] = os.environ.get('GEMINI_API_KEY')
 # --- End API Key Configuration ---
 
+# Flask secret key can also be loaded from .env or system environment
+app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'super secret key fallback')
+
+
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-app.secret_key = 'super secret key'  # Needed for session management
+
 
 # Create upload, docs, and static/images folders if they don't exist
 if not os.path.exists(UPLOAD_FOLDER):
